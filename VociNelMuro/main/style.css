@@ -1,0 +1,88 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #111;
+    color: #eee;
+    font-family: monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    text-align: center;
+}
+
+.menu-container {
+    max-width: 90%;
+}
+
+h1.glitch {
+    font-size: 3em;
+    position: relative;
+    color: white;
+}
+h1.glitch::before,
+h1.glitch::after {
+    content: attr(data-text);
+    position: absolute;
+    left: 0;
+    width: 100%;
+    overflow: hidden;
+    color: #f00;
+    clip: rect(0, 900px, 0, 0);
+}
+h1.glitch::before {
+    animation: glitchTop 2s infinite linear alternate-reverse;
+}
+h1.glitch::after {
+    color: #0ff;
+    animation: glitchBottom 2s infinite linear alternate-reverse;
+}
+@keyframes glitchTop {
+    0% {
+        clip: rect(0, 900px, 0, 0);
+    }
+    20% {
+        clip: rect(0, 900px, 40px, 0);
+    }
+    100% {
+        clip: rect(0, 900px, 0, 0);
+    }
+}
+@keyframes glitchBottom {
+    0% {
+        clip: rect(0, 900px, 0, 0);
+    }
+    30% {
+        clip: rect(40px, 900px, 80px, 0);
+    }
+    100% {
+        clip: rect(0, 900px, 0, 0);
+    }
+}
+
+.subtitle {
+    margin-top: 0.5em;
+    margin-bottom: 2em;
+    font-size: 1em;
+    color: #aaa;
+}
+
+.buttons button {
+    margin: 0.5em;
+    padding: 0.75em 2em;
+    font-family: monospace;
+    background: #222;
+    color: white;
+    border: 1px solid #444;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+.buttons button:hover {
+    background: #333;
+}
+
+@media (max-width: 600px) {
+    h1.glitch {
+        font-size: 2em;
+    }
+}
