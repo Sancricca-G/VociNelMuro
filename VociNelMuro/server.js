@@ -1,5 +1,4 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const WebSocket = require('ws');
 const path = require('path');
 
@@ -7,33 +6,12 @@ const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Configurazione MongoDB
-mongoose.connect('mongodb://localhost:27017/vocinelmuro', { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log('Connesso a MongoDB'))
-    .catch(err => console.error('Errore MongoDB:', err));
+// Dati in memoria
+let messages = [];
+let votes = {}; // { messageId: [userIds] }
+let users = {}; // { userId: { votesReceived: number, votesCast: [messageId] } }
 
-// Schema MongoDB
-const messageSchema = new mongoose.Schema({
-    text: { type: String, required: true, maxlength: 50 },
-    userId: { type: String, required: true },
-    timestamp: { type: Date, default: Date.now },
-    votes: [{ type: String }] // Array di userId che hanno votato
-});
-const Message = mongoose.model('Message', messageSchema);
-
-const userSchema = new mongoose.Schema({
-    userId: { type: String, required: true, unique: true },
-    votesReceived: { type: Number, default: 0 },
-    votesCast: [{ messageId: String, timestamp: Date }]
-});
-const User = mongoose.model('User', userSchema);
-
-// Middleware
-app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Set per i client WebSocket
-const clients = new Set();
 
 // WebSocket
 wss.on('connection', (ws) => {
@@ -41,19 +19,35 @@ wss.on('connection', (ws) => {
     ws.isAlive = true;
     ws.on('pong', () => ws.isAlive = true);
 
-    ws.on('message', async (data) => {
+    // Invia i messaggi esistenti al nuovo client
+    ws.send(JSON.stringify({ type: 'initialMessages', messages }));
+
+    ws.on('message', (data) => {
         try {
             const message = JSON.parse(data);
-            if (message.text && message.text.split(' ').length <= 5) {
-                const savedMessage = await Message.create({
-                    text: message.text,
-                    userId: message.userId
-                });
-                clients.forEach(client => {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(JSON.stringify(savedMessage));
+            switch (message.type) {
+                case 'newMessage':
+                    if (message.text && message.text.split(' ').length <= 5) {
+                        const messageId = Date.now().toString(); // ID temporaneo
+                        const newMessage = { id: messageId, text: message.text, userId: message.userId, timestamp: new Date() };
+                        messages.unshift(newMessage); // Aggiungi in cima
+                        messages = messages.slice(0, 20); // Limita a 20 messaggi
+                        broadcast(JSON.stringify({ type: 'newMessage', message: newMessage }));
                     }
-                });
+                    break;
+                case 'vote':
+                    const { messageId, userId } = message;
+                    if (!votes[messageId]) votes[messageId] = [];
+                    if (!votes[messageId].includes(userId)) {
+                        votes[messageId].push(userId);
+                        if (!users[userId]) users[userId] = { votesReceived: 0, votesCast: [] };
+                        if (!users[message.userId]) users[message.userId] = { votesReceived: 0, votesCast: [] };
+                        users[message.userId].votesReceived++;
+                        users[userId].votesCast.push(messageId);
+                        broadcast(JSON.stringify({ type: 'voteUpdate', messageId, userId }));
+                    }
+                    ws.send(JSON.stringify({ type: 'voteConfirmation', message: 'Voto registrato' }));
+                    break;
             }
         } catch (error) {
             console.error('Errore WebSocket:', error);
@@ -62,7 +56,6 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         console.log('Client disconnesso');
-        clients.delete(ws);
     });
 });
 
@@ -75,67 +68,15 @@ setInterval(() => {
     });
 }, 30000);
 
-// API REST
-app.post('/message', async (req, res) => {
-    const { text, userId } = req.body;
-    if (!text || text.split(' ').length > 5) {
-        return res.status(400).send('Messaggio non valido');
-    }
-    try {
-        const message = await Message.create({ text, userId });
-        res.status(201).send('Messaggio salvato');
-    } catch (error) {
-        res.status(500).send('Errore server');
-    }
-});
-
-app.get('/messages', async (req, res) => {
-    try {
-        const messages = await Message.find().sort({ timestamp: -1 }).limit(20);
-        res.json(messages);
-    } catch (error) {
-        res.status(500).send('Errore server');
-    }
-});
-
-app.post('/vote', async (req, res) => {
-    const { messageId, userId } = req.body;
-    try {
-        const message = await Message.findById(messageId);
-        if (!message) return res.status(404).send('Messaggio non trovato');
-        if (message.votes.includes(userId)) return res.status(400).send('Voto già registrato');
-        message.votes.push(userId);
-        await message.save();
-        await User.updateOne(
-            { userId: message.userId },
-            { $inc: { votesReceived: 1 } },
-            { upsert: true }
-        );
-        await User.updateOne(
-            { userId },
-            { $push: { votesCast: { messageId, timestamp: new Date() } } },
-            { upsert: true }
-        );
-        res.send('Voto registrato');
-    } catch (error) {
-        res.status(500).send('Errore server');
-    }
-});
-
-app.get('/user/:id', async (req, res) => {
-    try {
-        const user = await User.findOne({ userId: req.params.id });
-        if (!user) return res.status(404).send('Utente non trovato');
-        res.json({
-            votesReceived: user.votesReceived,
-            votesCast: user.votesCast.length,
-            lastVote: user.votesCast.length > 0 ? user.votesCast[user.votesCast.length - 1].timestamp : null
-        });
-    } catch (error) {
-        res.status(500).send('Errore server');
-    }
-});
+// Funzione per broadcast
+function broadcast(data) {
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(data);
+        }
+    });
+}
 
 // Avvio server
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 server.listen(PORT, () => console.log(`Server avviato sulla porta ${PORT}`));

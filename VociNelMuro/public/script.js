@@ -1,12 +1,22 @@
-// Genera un userId casuale (simulazione autenticazione)
+// Genera un userId casuale
 const userId = 'user_' + Math.random().toString(36).substr(2, 9);
 
 // WebSocket
 const ws = new WebSocket('ws://localhost:3000');
 ws.onopen = () => console.log('Connesso al WebSocket');
 ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    addMessageToWall(message);
+    const data = JSON.parse(event.data);
+    switch (data.type) {
+        case 'initialMessages':
+            data.messages.forEach(addMessageToWall);
+            break;
+        case 'newMessage':
+            addMessageToWall(data.message);
+            break;
+        case 'voteUpdate':
+            updateVoteButton(data.messageId, data.userId);
+            break;
+    }
 };
 
 // Gestione input messaggi
@@ -24,19 +34,12 @@ if (messageInput) {
     sendButton.addEventListener('click', () => {
         const text = messageInput.value.trim();
         if (text.split(/\s+/).length <= 5) {
-            ws.send(JSON.stringify({ text, userId }));
+            ws.send(JSON.stringify({ type: 'newMessage', text, userId }));
             messageInput.value = '';
             wordCount.textContent = '0/5 parole';
             sendButton.disabled = true;
         }
     });
-}
-
-// Carica messaggi iniziali
-function loadMessages() {
-    fetch('/messages')
-        .then(res => res.json())
-        .then(messages => messages.forEach(addMessageToWall));
 }
 
 // Aggiungi messaggio al muro
@@ -47,24 +50,24 @@ function addMessageToWall(message) {
     tile.className = 'message-tile';
     tile.innerHTML = `
         <p>${message.text}</p>
-        <button class="vote-button" data-id="${message._id}">Sospetto?</button>
+        <button class="vote-button" data-id="${message.id}">Sospetto?</button>
     `;
     wall.prepend(tile);
-    tile.querySelector('.vote-button').addEventListener('click', () => voteMessage(message._id));
+    tile.querySelector('.vote-button').addEventListener('click', () => voteMessage(message.id));
 }
 
 // Gestione voto
 function voteMessage(messageId) {
-    fetch('/vote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId, userId })
-    })
-        .then(res => res.text())
-        .then(text => {
-            alert(text);
-            document.querySelector(`button[data-id="${messageId}"]`).disabled = true;
-        });
+    ws.send(JSON.stringify({ type: 'vote', messageId, userId }));
+}
+
+// Aggiorna il pulsante di voto
+function updateVoteButton(messageId, userId) {
+    const button = document.querySelector(`.vote-button[data-id="${messageId}"]`);
+    if (button && !button.disabled) {
+        button.disabled = true;
+        alert('Voto registrato');
+    }
 }
 
 // Carica statistiche
@@ -72,16 +75,19 @@ function loadStats() {
     const votesReceived = document.getElementById('votesReceived');
     const lastVote = document.getElementById('lastVote');
     if (!votesReceived || !lastVote) return;
-    fetch(`/user/${userId}`)
-        .then(res => res.json())
-        .then(data => {
+    // Simula dati in memoria (basati su users nel server)
+    ws.send(JSON.stringify({ type: 'getStats', userId }));
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'stats') {
             votesReceived.textContent = `Hai ricevuto ${data.votesReceived} voti questa settimana`;
-            lastVote.textContent = data.lastVote
-                ? `Hai votato l'infiltrato ieri!`
-                : `Hai mancato l'infiltrato`;
-        });
+            lastVote.textContent = data.lastVote ? 'Hai votato l’infiltrato ieri!' : 'Hai mancato l’infiltrato';
+        }
+    };
 }
 
 // Inizializzazione
-if (document.getElementById('wall')) loadMessages();
+if (document.getElementById('wall')) {
+    // Nessun caricamento iniziale, gestito dal WebSocket
+}
 if (document.getElementById('votesReceived')) loadStats();
